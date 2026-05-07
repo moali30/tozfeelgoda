@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نظام حساب عبء المعيدين (Shadow Load)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { theme: { extend: { fontFamily: { sans: ['Cairo', 'sans-serif'] } } } }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dom-to-image-more@3.3.0/dist/dom-to-image-more.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        @media print { .no-print { display: none !important; } body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; } }
+        .ta-card { page-break-inside: avoid; }
+
+        /* ===== PDF Print Element — A4 Landscape (297×210mm) at 3.78px/mm ≈ 1123px ===== */
+        .pdf-wrap {
+            width: 1123px;
+            min-height: 200px;
+            font-family: 'Cairo', sans-serif;
+            direction: rtl;
+            background: #fff;
+            color: #1e293b;
+            padding: 48px 52px;
+            box-sizing: border-box;
+            overflow: visible;
+            line-height: 1.6;
+        }
+        /* إزالة حدود Tailwind الافتراضية التي تسبب خطوطاً رمادية في الصورة */
+        .pdf-wrap *, .pdf-wrap ::before, .pdf-wrap ::after {
+            border: 0;
+            border-color: transparent;
+        }
+        /* ---- Top accent bar ---- */
+        .pdf-wrap .accent-bar {
+            height: 6px;
+            border-radius: 3px;
+            background: linear-gradient(90deg, #4f46e5, #6366f1, #818cf8);
+            margin-bottom: 28px;
+        }
+        /* ---- Header row ---- */
+        .pdf-wrap .hdr {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 20px;
+            margin-bottom: 28px;
+        }
+        .pdf-wrap .hdr-right { flex: 1; min-width: 0; }
+        .pdf-wrap .hdr-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #6366f1;
+            letter-spacing: 1px;
+            margin: 0 0 4px 0;
+        }
+        .pdf-wrap .hdr-name {
+            font-size: 26px;
+            font-weight: 800;
+            color: #1e293b;
+            margin: 0;
+            line-height: 1.3;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        .pdf-wrap .hdr-left {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #eef2ff;
+            border: 2px solid #c7d2fe;
+            border-radius: 10px;
+            padding: 10px 22px;
+        }
+        .pdf-wrap .hdr-left .badge-num {
+            font-size: 28px;
+            font-weight: 800;
+            color: #4338ca;
+            line-height: 1;
+        }
+        .pdf-wrap .hdr-left .badge-txt {
+            font-size: 12px;
+            font-weight: 600;
+            color: #6366f1;
+            line-height: 1.2;
+        }
+        /* ---- Separator ---- */
+        .pdf-wrap .sep {
+            height: 1px;
+            background: #e2e8f0;
+            margin-bottom: 22px;
+        }
+        /* ---- Table ---- */
+        .pdf-wrap table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-size: 13.5px;
+            border: 2px solid #c7d2fe;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .pdf-wrap thead th {
+            background: #4338ca;
+            color: #fff;
+            font-weight: 700;
+            font-size: 13px;
+            padding: 12px 14px;
+            text-align: center;
+            border-left: 1px solid rgba(255,255,255,0.15);
+            white-space: nowrap;
+        }
+        .pdf-wrap thead th:last-child { border-left: none; }
+        .pdf-wrap tbody td {
+            padding: 11px 14px;
+            text-align: center;
+            border-bottom: 1px solid #e2e8f0;
+            border-left: 1px solid #e2e8f0;
+            font-weight: 500;
+        }
+        .pdf-wrap tbody td:last-child { border-left: none; }
+        .pdf-wrap tbody tr:last-child td { border-bottom: none; }
+        .pdf-wrap tbody tr:nth-child(even) { background: #f8fafc; }
+        .pdf-wrap tbody tr:nth-child(odd) { background: #fff; }
+        /* First & last columns right-aligned */
+        .pdf-wrap .al-r { text-align: right; }
+        /* Column widths */
+        .pdf-wrap .cw1 { width: 23%; }
+        .pdf-wrap .cw2 { width: 11%; }
+        .pdf-wrap .cw3 { width: 16%; }
+        .pdf-wrap .cw4 { width: 10%; }
+        .pdf-wrap .cw5 { width: 12%; }
+        .pdf-wrap .cw6 { width: 28%; }
+        /* ---- Footer ---- */
+        .pdf-wrap .foot {
+            margin-top: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            color: #94a3b8;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 min-h-screen p-4 md:p-8">
+    <div class="max-w-6xl mx-auto">
+        <!-- Upload UI -->
+        <div class="bg-white rounded-xl shadow-lg p-6 mb-8 no-print">
+            <div class="flex flex-col md:flex-row justify-between items-center mb-6 border-b pb-4">
+                <div>
+                    <h1 class="text-3xl font-bold text-indigo-700 flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                        نظام حساب عبء المعيدين (Shadow Load)
+                    </h1>
+                    <p class="text-gray-500 mt-2">قم برفع ملف الجدول (Excel أو CSV) لاستخراج تقرير لكل معيد.</p>
+                </div>
+            </div>
+            <div class="flex flex-col md:flex-row gap-4 items-end">
+                <div class="flex-1 w-full">
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">اختر الملف (Data.xlsx أو CSV):</label>
+                    <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 border border-gray-300 rounded-md cursor-pointer">
+                </div>
+                <button id="exportPdfBtn" onclick="exportToZip()" class="hidden bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-md shadow flex items-center gap-2 transition-colors duration-200">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm5 6a1 1 0 10-2 0v3.586l-1.293-1.293a1 1 0 10-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 11.586V8z" clip-rule="evenodd"/></svg>
+                    استخراج التقارير (ملف مضغوط ZIP)
+                </button>
+            </div>
+        </div>
+        <!-- Loading -->
+        <div id="loading" class="hidden text-center py-12 no-print">
+            <svg class="animate-spin h-10 w-10 text-indigo-600 mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <p class="text-lg text-gray-600">جاري معالجة البيانات...</p>
+        </div>
+        <!-- Report Container -->
+        <div id="reportContainer" class="hidden bg-white p-2 md:p-8 rounded-xl shadow-sm"></div>
+    </div>
+
+    <script>
+        let parsedShadows = {};
+        let parsedSortedNames = [];
+
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('reportContainer').classList.add('hidden');
+            document.getElementById('exportPdfBtn').classList.add('hidden');
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                    processData(XLSX.utils.sheet_to_json(worksheet, {defval: ""}));
+                } catch (err) {
+                    alert("حدث خطأ أثناء قراءة الملف. يرجى التأكد من أن الملف بصيغة صالحة.");
+                    console.error(err);
+                    document.getElementById('loading').classList.add('hidden');
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        function processData(data) {
+            const shadows = {};
+            let totalSessions = 0;
+            data.forEach(row => {
+                const clean = {};
+                for (let k in row) clean[k.trim()] = row[k];
+                const raw = clean['Shadow'];
+                if (!raw || raw.toString().trim() === "") return;
+                const name = raw.toString().trim();
+                if (!shadows[name]) shadows[name] = [];
+                shadows[name].push(clean);
+                totalSessions++;
+            });
+            const sorted = Object.keys(shadows).sort();
+            if (sorted.length === 0) {
+                alert("لم يتم العثور على بيانات في عمود (Shadow).");
+                document.getElementById('loading').classList.add('hidden');
+                return;
+            }
+            parsedShadows = shadows;
+            parsedSortedNames = sorted;
+
+            let html = `<div class="text-center mb-8 border-b pb-6">
+                <h2 class="text-3xl font-bold text-gray-800 mb-2">تقرير أحمال المعيدين (Teaching Assistants Load)</h2>
+                <div class="flex justify-center gap-6 mt-4">
+                    <span class="bg-indigo-100 text-indigo-800 py-1 px-4 rounded-full font-semibold">إجمالي المعيدين: ${sorted.length}</span>
+                    <span class="bg-green-100 text-green-800 py-1 px-4 rounded-full font-semibold">إجمالي السكاشن/المحاضرات: ${totalSessions}</span>
+                </div></div>`;
+
+            sorted.forEach(name => {
+                const s = shadows[name];
+                html += `<div class="ta-card mb-10 p-6 bg-white border border-gray-200 rounded-lg shadow-sm" data-name="${name}">
+                    <div class="flex justify-between items-center mb-4 border-b pb-3">
+                        <h3 class="text-2xl font-bold text-indigo-700">المعيد (Shadow): <span class="text-gray-900">${name}</span></h3>
+                        <span class="bg-blue-100 text-blue-800 py-1 px-3 rounded-lg font-bold text-lg shadow-inner">إجمالي العبء: ${s.length}</span>
+                    </div>
+                    <div class="overflow-x-auto"><table class="w-full text-right border-collapse"><thead>
+                        <tr class="bg-gray-100 text-gray-700">
+                            <th class="border border-gray-300 p-3 font-semibold">المادة (Subject)</th>
+                            <th class="border border-gray-300 p-3 font-semibold">اليوم (Day)</th>
+                            <th class="border border-gray-300 p-3 font-semibold">الوقت (Time)</th>
+                            <th class="border border-gray-300 p-3 font-semibold">المجموعة (Group)</th>
+                            <th class="border border-gray-300 p-3 font-semibold">المكان (Place)</th>
+                            <th class="border border-gray-300 p-3 font-semibold">دكتور المادة (Instructor)</th>
+                        </tr></thead><tbody>${s.map((r, i) => `<tr class="${i%2===0?'bg-white':'bg-gray-50'} hover:bg-indigo-50 transition-colors">
+                            <td class="border border-gray-300 p-3 font-medium">${r['Subject']||'-'}</td>
+                            <td class="border border-gray-300 p-3" dir="ltr">${r['Day']||'-'}</td>
+                            <td class="border border-gray-300 p-3" dir="ltr">${r['Time']||'-'}</td>
+                            <td class="border border-gray-300 p-3">${r['Group']||'-'}</td>
+                            <td class="border border-gray-300 p-3">${r['Place']||'-'}</td>
+                            <td class="border border-gray-300 p-3">${r['Instructor']||'-'}</td>
+                        </tr>`).join('')}</tbody></table></div></div>`;
+            });
+
+            document.getElementById('loading').classList.add('hidden');
+            const c = document.getElementById('reportContainer');
+            c.innerHTML = html;
+            c.classList.remove('hidden');
+            document.getElementById('exportPdfBtn').classList.remove('hidden');
+        }
+
+        /** Build a high-fidelity print element sized to A4 landscape */
+        function createPrintElement(name, schedule) {
+            const w = document.createElement('div');
+            w.className = 'pdf-wrap';
+
+            const today = new Date().toLocaleDateString('ar-EG', {year:'numeric',month:'long',day:'numeric'});
+
+            const rows = schedule.map((s, i) => {
+                const bg = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+                return `<tr style="background:${bg}">
+                    <td class="cw1 al-r" style="border-bottom:1px solid #e2e8f0;border-left:1px solid #e2e8f0;padding:11px 14px;font-weight:600;color:#1e293b">${s['Subject']||'-'}</td>
+                    <td class="cw2" style="border-bottom:1px solid #e2e8f0;border-left:1px solid #e2e8f0;padding:11px 14px;direction:ltr">${s['Day']||'-'}</td>
+                    <td class="cw3" style="border-bottom:1px solid #e2e8f0;border-left:1px solid #e2e8f0;padding:11px 14px;direction:ltr">${s['Time']||'-'}</td>
+                    <td class="cw4" style="border-bottom:1px solid #e2e8f0;border-left:1px solid #e2e8f0;padding:11px 14px">${s['Group']||'-'}</td>
+                    <td class="cw5" style="border-bottom:1px solid #e2e8f0;border-left:1px solid #e2e8f0;padding:11px 14px">${s['Place']||'-'}</td>
+                    <td class="cw6 al-r" style="border-bottom:1px solid #e2e8f0;padding:11px 14px">${s['Instructor']||'-'}</td>
+                </tr>`;
+            }).join('');
+
+            w.innerHTML = `
+                <div class="accent-bar"></div>
+                <div class="hdr">
+                    <div class="hdr-right">
+                        <p class="hdr-label">TEACHING ASSISTANT</p>
+                        <h2 class="hdr-name">${name}</h2>
+                    </div>
+                    <div class="hdr-left">
+                        <div style="text-align:center">
+                            <div class="badge-num">${schedule.length}</div>
+                            <div class="badge-txt">إجمالي<br>العبء</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="sep"></div>
+                <table>
+                    <thead><tr>
+                        <th class="cw1">المادة (Subject)</th>
+                        <th class="cw2">اليوم (Day)</th>
+                        <th class="cw3">الوقت (Time)</th>
+                        <th class="cw4">المجموعة (Group)</th>
+                        <th class="cw5">المكان (Place)</th>
+                        <th class="cw6">دكتور المادة (Instructor)</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                <div class="foot">
+                    <span>Shadow Load Report</span>
+                    <span>${today}</span>
+                </div>`;
+            return w;
+        }
+
+        async function exportToZip() {
+            const btn = document.getElementById('exportPdfBtn');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('opacity-75', 'cursor-not-allowed');
+
+            try {
+                const { jsPDF } = window.jspdf;
+                const zip = new JSZip();
+                const total = parsedSortedNames.length;
+                // A4 landscape mm
+                const pageW = 297, pageH = 210, margin = 12;
+                const contentW = pageW - 2 * margin;
+                const contentH = pageH - 2 * margin;
+
+                for (let i = 0; i < total; i++) {
+                    const name = parsedSortedNames[i];
+                    const schedule = parsedShadows[name];
+                    btn.innerHTML = `جاري استخراج ${i + 1} من ${total}...`;
+
+                    const printEl = createPrintElement(name, schedule);
+
+                    // Hidden off-screen container (no overflow clipping!)
+                    const box = document.createElement('div');
+                    box.style.cssText = 'position:absolute;left:-9999px;top:0;overflow:visible';
+                    box.appendChild(printEl);
+                    document.body.appendChild(box);
+
+                    await document.fonts.ready;
+                    await new Promise(r => setTimeout(r, 250));
+
+                    // Capture with dom-to-image (SVG-based, Arabic-safe)
+                    const scale = 2; // 2× for sharp output
+                    const elW = printEl.scrollWidth;
+                    const elH = printEl.scrollHeight;
+
+                    const dataUrl = await domtoimage.toPng(printEl, {
+                        quality: 1,
+                        bgcolor: '#ffffff',
+                        width: elW * scale,
+                        height: elH * scale,
+                        style: {
+                            transform: `scale(${scale})`,
+                            transformOrigin: 'top right',
+                            overflow: 'visible'
+                        }
+                    });
+
+                    const img = new Image();
+                    img.src = dataUrl;
+                    await new Promise(r => { img.onload = r; });
+
+                    const ratio = img.height / img.width;
+                    const imgW = contentW;
+                    const imgH = imgW * ratio;
+
+                    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+                    if (imgH <= contentH) {
+                        pdf.addImage(dataUrl, 'PNG', margin, margin, imgW, imgH);
+                    } else {
+                        // Multi-page slicing
+                        const srcCanvas = document.createElement('canvas');
+                        srcCanvas.width = img.width;
+                        srcCanvas.height = img.height;
+                        srcCanvas.getContext('2d').drawImage(img, 0, 0);
+                        const slicePx = (contentH / imgH) * img.height;
+                        const pages = Math.ceil(imgH / contentH);
+                        for (let p = 0; p < pages; p++) {
+                            if (p > 0) pdf.addPage();
+                            const sy = p * slicePx;
+                            const sh = Math.min(slicePx, img.height - sy);
+                            const dh = (sh / img.height) * imgH;
+                            const sl = document.createElement('canvas');
+                            sl.width = img.width; sl.height = sh;
+                            sl.getContext('2d').drawImage(srcCanvas, 0, sy, img.width, sh, 0, 0, img.width, sh);
+                            pdf.addImage(sl.toDataURL('image/png'), 'PNG', margin, margin, imgW, dh);
+                        }
+                    }
+
+                    document.body.removeChild(box);
+                    const safe = name.replace(/[\/\?<>\\:\*\|":]/g, '-');
+                    zip.file(`${safe}.pdf`, pdf.output('blob'));
+                }
+
+                btn.innerHTML = 'جاري إنشاء الملف المضغوط...';
+                const zipBlob = await zip.generateAsync({ type: "blob" });
+                saveAs(zipBlob, "تقارير_المعيدين_منفصلة.zip");
+
+            } catch (error) {
+                console.error("Export error:", error);
+                alert("حدث خطأ أثناء عملية الاستخراج: " + error.message);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                btn.classList.remove('opacity-75', 'cursor-not-allowed');
+            }
+        }
+    </script>
+</body>
+</html>
